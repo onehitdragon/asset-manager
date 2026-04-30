@@ -1,0 +1,14 @@
+namespace FBSEngine;
+
+table Vec3{
+    x: float;
+    y: float;
+    z: float;
+}
+
+table Vec4{
+    x: float;
+    y: float;
+    z: float;
+    w: float;
+}

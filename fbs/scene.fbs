@@ -1,0 +1,26 @@
+include "common.fbs";
+include "components.fbs";
+
+namespace FBSEngine;
+
+union SceneNode{
+    GameObjectPrefab,
+    GameObject
+}
+
+table GameObjectPrefab{
+    prefab_ref: string;
+}
+
+table GameObject{
+    id: string;
+    name: string;
+    components: [Component];
+    childs: [SceneNode];
+}
+
+table Scene{
+    id: string;
+    name: string;
+    scene_nodes: [SceneNode];
+}

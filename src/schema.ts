@@ -1,16 +1,9 @@
 import z from "zod";
 import { v4 as uuidv4 } from 'uuid';
 
-// folder
-export const FolderSchema = z.object({
-    guid: z.string(),
-    type: z.literal("folder")
-});
-
-// file
-export const FileSchema = z.object({
-    guid: z.string(),
-    type: z.literal("file")
+// other
+export const OtherSchema = z.object({
+    type: z.literal("other")
 });
 
 // image
@@ -33,7 +26,6 @@ const LightMapSchema = TextureBaseSchema.extend({
     imageType: z.literal("LightMap"),
 });
 export const ImageSchema = z.object({
-    guid: z.string(),
     type: z.literal("image"),
     property: z.discriminatedUnion("imageType", [
         TextureSchema,
@@ -43,35 +35,27 @@ export const ImageSchema = z.object({
 });
 
 // asset
-export const AssetSchema = z.discriminatedUnion("type", [FolderSchema, FileSchema, ImageSchema]);
+export const AssetSchema = z.discriminatedUnion("type", [OtherSchema, ImageSchema]);
 
-// create utils
-export function createDefaultFolder(){
-    const newMetaObject: z.infer<typeof FolderSchema> = {
-        guid: uuidv4(),
-        type: "folder"
-    };
-    return newMetaObject;
+// types
+export type OtherAsset = z.infer<typeof OtherSchema>;
+export type ImageAsset = z.infer<typeof ImageSchema>;
+export type Asset = OtherAsset | ImageAsset;
+
+// defaults
+export const defaultOtherAsset: OtherAsset = {
+    type: "other"
 }
-export function createDefaultFile(){
-    const newMetaObject: z.infer<typeof FileSchema> = {
-        guid: uuidv4(),
-        type: "file"
-    };
-    return newMetaObject;
-}
-export function createDefaultImage(){
-    const newMetaObject: z.infer<typeof ImageSchema> = {
-        guid: uuidv4(),
-        type: "image",
-        property: {
-            imageType: "Texture",
-            sRGB: true,
-            qualityLevel: 255,
-            generateMipmaps: true,
-            wrapMode: "REPEAT",
-            filterMode: "BILINEAR",
-        }
-    };
-    return newMetaObject;
-}
+export const defaultImageAsset: ImageAsset = {
+    type: "image",
+    property: {
+        imageType: "Texture",
+        sRGB: true,
+        qualityLevel: 255,
+        generateMipmaps: true,
+        wrapMode: "REPEAT",
+        filterMode: "BILINEAR",
+    }
+};
+export const defaultOtherAssetJSON = JSON.stringify(defaultOtherAsset);
+export const defaultImageAssetJSON = JSON.stringify(defaultImageAsset);

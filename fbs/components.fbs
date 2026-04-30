@@ -1,0 +1,20 @@
+include "common.fbs";
+
+namespace FBSEngine;
+
+table Transform{
+    id: string;
+    pos: Vec3;
+    rot: Vec4;
+    scale: Vec3;
+}
+
+table Mesh{
+    id: string;
+    mesh_ref: string;
+}
+
+union Component{
+    Transform,
+    Mesh
+}

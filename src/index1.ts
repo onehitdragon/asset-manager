@@ -1,0 +1,208 @@
+import Database from 'better-sqlite3';
+import * as fsWalk from '@nodelib/fs.walk';
+import path from "node:path";
+import fs from "fs-extra";
+import xxhash, { type XXHashAPI } from "xxhash-wasm";
+import { v4 as uuidv4 } from "uuid";
+import * as schema from "./schema";
+import { db, filesQuery, assetsQuery, FileRow, AssetRow } from "./db";
+
+const MAIN_DIR = path.join(process.cwd(), "test", "ark-rm2", "Assets");
+const MAIN_DIR2 = path.join(process.cwd(), "test", "ark-rm");
+const ASSET_DIR = MAIN_DIR2;
+
+async function rescan(){
+    let now = performance.now();
+    console.log(now, "ms");
+
+    const fileRowsDB = filesQuery.gets.all() as FileRow[];
+    const hashCache = new Map<string, string>();
+    for(const fileRow of fileRowsDB){
+        if(!fileRow.path) continue;
+        if(!fs.existsSync(fileRow.path)){
+            filesQuery.updatePath.run(null, fileRow.uuid);
+            fileRow.path = null;
+            fileRow.dirty = true;
+            continue;
+        }
+        const hash = await hashFile(fileRow.path);
+        hashCache.set(fileRow.path, hash);
+        if(fileRow.hash !== hash){
+            filesQuery.updateHash.run(hash, fileRow.uuid);
+            fileRow.hash = hash;
+            fileRow.dirty = true;
+        }
+    }
+
+    console.log(performance.now() - now, "ms");
+    now = performance.now();
+
+    const hashToFileRows = new Map<string, FileRow[]>();
+    for(const fileRow of fileRowsDB){
+        const exist = hashToFileRows.get(fileRow.hash);
+        if(!exist) hashToFileRows.set(fileRow.hash, [fileRow]);
+        else exist.push(fileRow);
+    }
+    const entries = fsWalk.walkSync(ASSET_DIR);
+    for(const entry of entries){
+        if(entry.dirent.isDirectory()) continue;
+        const hash = hashCache.get(entry.path) || await hashFile(entry.path);
+        let fileRows = hashToFileRows.get(hash);
+        if(!fileRows){
+            const fileRow: FileRow = {
+                uuid: uuidv4(),
+                hash,
+                path: entry.path,
+                dirty: true
+            }
+            filesQuery.insert.run(fileRow.uuid, fileRow.hash, fileRow.path);
+            hashToFileRows.set(fileRow.hash, [fileRow]);
+            fileRowsDB.push(fileRow);
+        }
+        else if(!fileRows.some(e => e.path === entry.path)){
+            let updated = false;
+            for(const fileRow of fileRows){
+                if(!fileRow.path){
+                    filesQuery.updatePath.run(entry.path, fileRow.uuid);
+                    fileRow.path = entry.path;
+                    fileRow.dirty = true;
+                    updated = true;
+                    break;
+                }
+            }
+            if(!updated){
+                const fileRow: FileRow = {
+                    uuid: uuidv4(),
+                    hash,
+                    path: entry.path,
+                    dirty: true
+                }
+                filesQuery.insert.run(fileRow.uuid, fileRow.hash, fileRow.path);
+                fileRows.push(fileRow);
+                fileRowsDB.push(fileRow);
+            }
+        }
+    }
+
+    console.log(performance.now() - now, "ms");
+    now = performance.now();
+
+    const assetRowsDB = assetsQuery.gets.all() as AssetRow[];
+    const fileIdToAssetRows = new Map<string, AssetRow[]>();
+    for(const assetRow of assetRowsDB){
+        const exist = fileIdToAssetRows.get(assetRow.fileId);
+        if(!exist) fileIdToAssetRows.set(assetRow.fileId, [assetRow]);
+        else exist.push(assetRow);
+    }
+    for(const fileRow of fileRowsDB){
+        const assetRows = fileIdToAssetRows.get(fileRow.uuid) || [];
+        if(!fileRow.path){
+            filesQuery.delete.run(fileRow.uuid);
+            for(const assetRow of assetRows) deleteGenAsset(assetRow.uuid);
+        }
+        else if(fileRow.dirty){
+            if(isImageFile(fileRow.path)){
+                syncNotContainer(fileRow, assetRows, "image");
+            }
+            else if(isGLBFile(fileRow.path)){
+
+            }
+            else{
+                syncNotContainer(fileRow, assetRows, "other");
+            }
+        }
+    }
+
+    console.log(performance.now() - now, "ms");
+    now = performance.now();
+}
+
+let xxHashAPI: XXHashAPI | undefined;
+async function hashFile(filePath: string){
+    if(!xxHashAPI) xxHashAPI = await xxhash();
+    const hash = xxHashAPI.create64();
+    
+    return new Promise<string>((resolve, reject) => {
+        const stream = fs.createReadStream(filePath);
+        stream.on("data", chunk => hash.update(chunk));
+        stream.on("end", () => resolve(hash.digest().toString()));
+        stream.on("error", reject);
+    });
+}
+
+function syncNotContainer(fileRow: FileRow, assetRows: AssetRow[], type: AssetRow["type"]){
+    const usedSet = new Set<string>();
+    for(const assetRow of assetRows){
+        if(assetRow.type !== type) continue;
+        usedSet.add(assetRow.uuid);
+        if(assetRow.hash !== fileRow.hash){
+            assetsQuery.updateHash.run(fileRow.hash, assetRow.uuid);
+            assetRow.hash = fileRow.hash;
+            generateAsset(fileRow, assetRow);
+        }
+        const name = path.basename(fileRow.path || "");
+        if(assetRow.name !== name){
+            assetsQuery.updateName.run(name, assetRow.uuid);
+            assetRow.name = name;
+        }
+        break;
+    }
+    if(usedSet.size === 0){
+        const assetRow: AssetRow = {
+            uuid: uuidv4(),
+            fileId: fileRow.uuid,
+            hash: fileRow.hash,
+            type,
+            name: path.basename(fileRow.path || ""),
+            property: createAssetDefaultProterpty(type)
+        };
+        assetsQuery.insert.run(
+            assetRow.uuid,
+            assetRow.fileId,
+            assetRow.hash,
+            assetRow.type,
+            assetRow.name,
+            assetRow.property
+        );
+        usedSet.add(assetRow.uuid);
+        assetRows.push(assetRow);
+        generateAsset(fileRow, assetRow);
+    }
+    assetsQuery.deletesTransaction(
+        assetRows.filter(e => !usedSet.has(e.uuid)).map(e => e.uuid)
+    );
+}
+function syncContainer(){
+
+}
+function createAssetDefaultProterpty(type: AssetRow["type"]){
+    if(type === "image"){
+        return schema.defaultImageAssetJSON;
+    }
+    else{
+        return schema.defaultOtherAssetJSON;
+    }
+}
+const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".tga"]);
+function isImageFile(filePath: string){
+    const ext = path.extname(filePath).toLowerCase();
+    return IMAGE_EXTS.has(ext);
+}
+function isGLBFile(filePath: string){
+    const ext = path.extname(filePath).toLowerCase();
+    return ext === ".glb";
+}
+
+const ASSET_GENERATED_DIR = path.join(process.cwd(), ".assets");
+function generateAsset(fileRow: FileRow, assetRow: AssetRow){
+    fs.ensureDirSync(ASSET_GENERATED_DIR);
+    const genAssetPath = path.join(ASSET_GENERATED_DIR, assetRow.uuid);
+    const file = fs.openSync(genAssetPath, "w");
+    fs.writeSync(file, `${new Date().toLocaleTimeString()} \r\n todo: content of file ${fileRow.path}`);
+}
+function deleteGenAsset(uuid: string){
+    const genAssetPath = path.join(ASSET_GENERATED_DIR, uuid);
+    fs.removeSync(genAssetPath);
+}
+
+rescan();
