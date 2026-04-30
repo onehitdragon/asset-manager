@@ -1,0 +1,2 @@
+flatc --ts --ts-no-import-ext -o fbs-gen ./fbs/scene.fbs
+flatc --ts --ts-no-import-ext -o fbs-gen ./fbs/assets.fbs

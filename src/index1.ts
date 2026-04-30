@@ -7,7 +7,10 @@ import { v4 as uuidv4 } from "uuid";
 import * as schema from "./schema";
 import { db, filesQuery, assetsQuery, FileRow, AssetRow } from "./db";
 import ShotEngineType from "@shot-engine/types";
+import sharp from "sharp";
 import { readGLBFile } from './glb';
+import { saveImageAssetBinary, saveMeshAssetBinary } from './flatbf';
+import { imageToRaw } from './imageToRaw';
 
 const MAIN_DIR = path.join(process.cwd(), "test", "ark-rm2", "Assets");
 const MAIN_DIR2 = path.join(process.cwd(), "test", "ark-rm");
@@ -96,6 +99,7 @@ async function rescan(){
         if(!exist) fileIdToAssetRows.set(assetRow.fileId, [assetRow]);
         else exist.push(assetRow);
     }
+    
     for(const fileRow of fileRowsDB){
         const assetRows = fileIdToAssetRows.get(fileRow.uuid) || [];
         if(!fileRow.path){
@@ -104,13 +108,13 @@ async function rescan(){
         }
         else if(fileRow.dirty){
             if(isImageFile(fileRow.path)){
-                syncNotContainer(fileRow, assetRows, "image");
+                await syncNotContainer(fileRow, assetRows, "image");
             }
             else if(isGLBFile(fileRow.path)){
                 syncGLBContainer(fileRow, assetRows);
             }
             else{
-                syncNotContainer(fileRow, assetRows, "other");
+                await syncNotContainer(fileRow, assetRows, "other");
             }
         }
     }
@@ -166,7 +170,7 @@ async function hashObject(object: Object) {
     return hash.digest().toString(); 
 }
 
-function syncNotContainer(fileRow: FileRow, assetRows: AssetRow[], type: AssetRow["type"]){
+async function syncNotContainer(fileRow: FileRow, assetRows: AssetRow[], type: AssetRow["type"]){
     const usedSet = new Set<string>();
     for(const assetRow of assetRows){
         if(assetRow.type !== type) continue;
@@ -174,7 +178,7 @@ function syncNotContainer(fileRow: FileRow, assetRows: AssetRow[], type: AssetRo
         if(assetRow.hash !== fileRow.hash){
             assetsQuery.updateHash.run(fileRow.hash, assetRow.uuid);
             assetRow.hash = fileRow.hash;
-            generateAsset(fileRow, assetRow);
+            await genAssetWithFile(fileRow, assetRow, type);
         }
         const name = path.basename(fileRow.path || "");
         if(assetRow.name !== name){
@@ -202,7 +206,7 @@ function syncNotContainer(fileRow: FileRow, assetRows: AssetRow[], type: AssetRo
         );
         usedSet.add(assetRow.uuid);
         assetRows.push(assetRow);
-        generateAsset(fileRow, assetRow);
+        await genAssetWithFile(fileRow, assetRow, type);
     }
     const uuids = assetRows.filter(e => !usedSet.has(e.uuid)).map(e => e.uuid);
     assetsQuery.deletesTransaction(uuids);
@@ -242,7 +246,7 @@ async function syncGLBContainer(fileRow: FileRow, assetRows: AssetRow[]){
             );
             usedSet.add(assetRow.uuid);
             assetRows.push(assetRow);
-            generateAsset(fileRow, assetRow);
+            genImageAsset(assetRow, texture.imageAsset);
         }
     }
     for(const mesh of meshes){
@@ -271,7 +275,7 @@ async function syncGLBContainer(fileRow: FileRow, assetRows: AssetRow[]){
             );
             usedSet.add(assetRow.uuid);
             assetRows.push(assetRow);
-            generateAsset(fileRow, assetRow);
+            genMeshAsset(assetRow, mesh.meshAsset);
         }
     }
     function updateGameObjectDependency(go: ShotEngineType.GameObject){
@@ -310,7 +314,7 @@ async function syncGLBContainer(fileRow: FileRow, assetRows: AssetRow[]){
             );
             usedSet.add(assetRow.uuid);
             assetRows.push(assetRow);
-            generateAsset(fileRow, assetRow);
+            genDefaultAsset(fileRow, assetRow);
         }
     }
 
@@ -333,7 +337,7 @@ function createAssetDefaultProterpty(type: AssetRow["type"]){
     }
 }
 
-const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".tga"]);
+const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg"]);
 function isImageFile(filePath: string){
     const ext = path.extname(filePath).toLowerCase();
     return IMAGE_EXTS.has(ext);
@@ -344,7 +348,20 @@ function isGLBFile(filePath: string){
 }
 
 const ASSET_GENERATED_DIR = path.join(process.cwd(), ".assets");
-function generateAsset(fileRow: FileRow, assetRow: AssetRow){
+async function genAssetWithFile(fileRow: FileRow, assetRow: AssetRow, type: AssetRow["type"]) {
+    if(!fileRow.path) return;
+    if(type === "image"){
+        const raw = await imageToRaw(fs.readFileSync(fileRow.path));
+        const imageAsset: ShotEngineType.ImageAsset = {
+            width: raw.info.width,
+            height: raw.info.height,
+            data: raw.data
+        }
+        genImageAsset(assetRow, imageAsset);
+    }
+    else genDefaultAsset(fileRow, assetRow);
+}
+function genDefaultAsset(fileRow: FileRow, assetRow: AssetRow){
     fs.ensureDirSync(ASSET_GENERATED_DIR);
     const genAssetPath = path.join(ASSET_GENERATED_DIR, assetRow.uuid);
     const file = fs.openSync(genAssetPath, "w");
@@ -352,6 +369,17 @@ function generateAsset(fileRow: FileRow, assetRow: AssetRow){
         ${new Date().toLocaleTimeString()} \r\n todo: content of file ${fileRow.path}
         ${assetRow.type} ${assetRow.name}
     `);
+    fs.closeSync(file);
+}
+function genImageAsset(assetRow: AssetRow, imageAsset: ShotEngineType.ImageAsset){
+    fs.ensureDirSync(ASSET_GENERATED_DIR);
+    const genAssetPath = path.join(ASSET_GENERATED_DIR, assetRow.uuid);
+    saveImageAssetBinary(imageAsset, genAssetPath);
+}
+function genMeshAsset(assetRow: AssetRow, meshAsset: ShotEngineType.MeshAsset){
+    fs.ensureDirSync(ASSET_GENERATED_DIR);
+    const genAssetPath = path.join(ASSET_GENERATED_DIR, assetRow.uuid);
+    saveMeshAssetBinary(meshAsset, genAssetPath);
 }
 function deleteGenAsset(uuid: string){
     const genAssetPath = path.join(ASSET_GENERATED_DIR, uuid);

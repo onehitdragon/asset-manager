@@ -1,2 +1,6 @@
 node_modules
 test
+dist
+fbs-gen
+db-gen
+/.assets

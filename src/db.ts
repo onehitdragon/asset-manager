@@ -1,4 +1,6 @@
 import Database from 'better-sqlite3';
+import path from "node:path";
+import fs from "fs-extra";
 
 export type FileRow = {
     uuid: string,
@@ -15,7 +17,9 @@ export type AssetRow = {
     property: string
 }
 
-export const db = new Database("lite3.db", {  });
+const DB_FILE = path.join(process.cwd(), "db-gen", "lite3.db");
+fs.ensureFileSync(DB_FILE);
+export const db = new Database(DB_FILE, {  });
 db.pragma('journal_mode = WAL');
 db.exec(`
     CREATE TABLE IF NOT EXISTS files(

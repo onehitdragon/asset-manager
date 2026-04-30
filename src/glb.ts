@@ -3,6 +3,7 @@ import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import path from "node:path";
 import { v4 as uuidv4 } from "uuid";
 import ShotEngineType from "@shot-engine/types";
+import { imageToRaw } from './imageToRaw';
 
 type GLB = {
     textures: GLBTexture[],
@@ -18,6 +19,7 @@ type GLBMesh = {
     meshAsset: ShotEngineType.MeshAsset
 }
 
+// readGLBFile(path.join(process.cwd(), "test", "ark-rm", "Untitled.glb"));
 export async function readGLBFile(filePath: string){
     const io = new NodeIO()
     .registerExtensions(ALL_EXTENSIONS)
@@ -33,10 +35,13 @@ export async function readGLBFile(filePath: string){
     };
     for(const texture of root.listTextures()){
         const image = texture.getImage();
+        const raw = await imageToRaw(image ?? new Uint8Array());
         glb.textures.push({
             name: texture.getName(),
             imageAsset: {
-                data: image ?? new Uint8Array()
+                width: raw.info.width,
+                height: raw.info.height,
+                data: raw.data
             }
         });
     }
