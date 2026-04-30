@@ -6,6 +6,8 @@ import xxhash, { type XXHashAPI } from "xxhash-wasm";
 import { v4 as uuidv4 } from "uuid";
 import * as schema from "./schema";
 import { db, filesQuery, assetsQuery, FileRow, AssetRow } from "./db";
+import ShotEngineType from "@shot-engine/types";
+import { readGLBFile } from './glb';
 
 const MAIN_DIR = path.join(process.cwd(), "test", "ark-rm2", "Assets");
 const MAIN_DIR2 = path.join(process.cwd(), "test", "ark-rm");
@@ -105,7 +107,7 @@ async function rescan(){
                 syncNotContainer(fileRow, assetRows, "image");
             }
             else if(isGLBFile(fileRow.path)){
-
+                syncGLBContainer(fileRow, assetRows);
             }
             else{
                 syncNotContainer(fileRow, assetRows, "other");
@@ -128,6 +130,40 @@ async function hashFile(filePath: string){
         stream.on("end", () => resolve(hash.digest().toString()));
         stream.on("error", reject);
     });
+}
+async function hashImageAsset(imageAsset: ShotEngineType.ImageAsset) {
+    if(!xxHashAPI) xxHashAPI = await xxhash();
+    const hash = xxHashAPI.create64();
+    
+    hash.update(imageAsset.data);
+    return hash.digest().toString();
+}
+async function hashMeshAsset(meshAsset: ShotEngineType.MeshAsset) {
+    if(!xxHashAPI) xxHashAPI = await xxhash();
+    const hash = xxHashAPI.create64();
+    
+    hash.update(new Uint8Array(Uint32Array.of(meshAsset.primitives.length).buffer));
+    for(const prim of meshAsset.primitives){
+        const { attribute, indices } = prim;
+        const { positions, normals } = attribute;
+
+        hash.update(new Uint8Array(Uint32Array.of(positions.length).buffer));
+        hash.update(new Uint8Array(positions.buffer, positions.byteOffset, positions.byteLength));
+
+        hash.update(new Uint8Array(Uint32Array.of(normals.length).buffer));
+        hash.update(new Uint8Array(normals.buffer, normals.byteOffset, normals.byteLength));
+
+        hash.update(new Uint8Array(Uint32Array.of(indices.length).buffer));
+        hash.update(new Uint8Array(indices.buffer, indices.byteOffset, indices.byteLength));
+    }
+    return hash.digest().toString();
+}
+async function hashObject(object: Object) {
+    if(!xxHashAPI) xxHashAPI = await xxhash();
+    const hash = xxHashAPI.create64();
+    
+    hash.update(JSON.stringify(object));
+    return hash.digest().toString(); 
 }
 
 function syncNotContainer(fileRow: FileRow, assetRows: AssetRow[], type: AssetRow["type"]){
@@ -168,21 +204,135 @@ function syncNotContainer(fileRow: FileRow, assetRows: AssetRow[], type: AssetRo
         assetRows.push(assetRow);
         generateAsset(fileRow, assetRow);
     }
-    assetsQuery.deletesTransaction(
-        assetRows.filter(e => !usedSet.has(e.uuid)).map(e => e.uuid)
-    );
+    const uuids = assetRows.filter(e => !usedSet.has(e.uuid)).map(e => e.uuid);
+    assetsQuery.deletesTransaction(uuids);
+    uuids.forEach(e => deleteGenAsset(e))
 }
-function syncContainer(){
+async function syncGLBContainer(fileRow: FileRow, assetRows: AssetRow[]){
+    if(!fileRow.path) return;
+    const glb = await readGLBFile(fileRow.path);
+    if(!glb) return;
+    const usedSet = new Set<string>();
+    const { textures, meshes, gameObjects } = glb;
+    const textureHashes: string[] = [];
+    const meshHashes: string[] = [];
+    for(const texture of textures){
+        const hash = await hashImageAsset(texture.imageAsset);
+        textureHashes.push(hash);
+        const assetRow = assetRows.find(e => e.hash === hash);
+        if(assetRow){
+            usedSet.add(assetRow.uuid);
+        }
+        else{
+            const assetRow: AssetRow = {
+                uuid: uuidv4(),
+                fileId: fileRow.uuid,
+                hash,
+                type: "image",
+                name: path.basename(fileRow.path) + "/" + texture.name,
+                property: createAssetDefaultProterpty("image")
+            };
+            assetsQuery.insert.run(
+                assetRow.uuid,
+                assetRow.fileId,
+                assetRow.hash,
+                assetRow.type,
+                assetRow.name,
+                assetRow.property
+            );
+            usedSet.add(assetRow.uuid);
+            assetRows.push(assetRow);
+            generateAsset(fileRow, assetRow);
+        }
+    }
+    for(const mesh of meshes){
+        const hash = await hashMeshAsset(mesh.meshAsset);
+        meshHashes.push(hash);
+        const assetRow = assetRows.find(e => e.hash === hash);
+        if(assetRow){
+            usedSet.add(assetRow.uuid);
+        }
+        else{
+            const assetRow: AssetRow = {
+                uuid: uuidv4(),
+                fileId: fileRow.uuid,
+                hash,
+                type: "mesh",
+                name: path.basename(fileRow.path) + "/" + mesh.name,
+                property: createAssetDefaultProterpty("mesh")
+            };
+            assetsQuery.insert.run(
+                assetRow.uuid,
+                assetRow.fileId,
+                assetRow.hash,
+                assetRow.type,
+                assetRow.name,
+                assetRow.property
+            );
+            usedSet.add(assetRow.uuid);
+            assetRows.push(assetRow);
+            generateAsset(fileRow, assetRow);
+        }
+    }
+    function updateGameObjectDependency(go: ShotEngineType.GameObject){
+        for(const component of go.components){
+            if(component.type === "Mesh"){
+                component.meshRef = meshHashes[Number(component.meshRef)];
+            }
+        }
+        for(const child of go.childs) updateGameObjectDependency(child as ShotEngineType.GameObject);
+    }
+    for(const gameObject of gameObjects){
+        updateGameObjectDependency(gameObject);
+    }
+    for(const gameObject of gameObjects){
+        const hash = await hashObject(gameObject);
+        const assetRow = assetRows.find(e => e.hash === hash);
+        if(assetRow){
+            usedSet.add(assetRow.uuid);
+        }
+        else{
+            const assetRow: AssetRow = {
+                uuid: uuidv4(),
+                fileId: fileRow.uuid,
+                hash,
+                type: "prefab",
+                name: path.basename(fileRow.path) + "/" + gameObject.name,
+                property: createAssetDefaultProterpty("prefab")
+            };
+            assetsQuery.insert.run(
+                assetRow.uuid,
+                assetRow.fileId,
+                assetRow.hash,
+                assetRow.type,
+                assetRow.name,
+                assetRow.property
+            );
+            usedSet.add(assetRow.uuid);
+            assetRows.push(assetRow);
+            generateAsset(fileRow, assetRow);
+        }
+    }
 
+    const uuids = assetRows.filter(e => !usedSet.has(e.uuid)).map(e => e.uuid);
+    assetsQuery.deletesTransaction(uuids);
+    uuids.forEach(e => deleteGenAsset(e))
 }
 function createAssetDefaultProterpty(type: AssetRow["type"]){
     if(type === "image"){
         return schema.defaultImageAssetJSON;
     }
+    else if(type === "mesh"){
+        return schema.defaultMeshAssetJSON;
+    }
+    else if(type === "prefab"){
+        return schema.defaultPrefabAssetJSON;
+    }
     else{
         return schema.defaultOtherAssetJSON;
     }
 }
+
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".tga"]);
 function isImageFile(filePath: string){
     const ext = path.extname(filePath).toLowerCase();
@@ -198,7 +348,10 @@ function generateAsset(fileRow: FileRow, assetRow: AssetRow){
     fs.ensureDirSync(ASSET_GENERATED_DIR);
     const genAssetPath = path.join(ASSET_GENERATED_DIR, assetRow.uuid);
     const file = fs.openSync(genAssetPath, "w");
-    fs.writeSync(file, `${new Date().toLocaleTimeString()} \r\n todo: content of file ${fileRow.path}`);
+    fs.writeSync(file, `
+        ${new Date().toLocaleTimeString()} \r\n todo: content of file ${fileRow.path}
+        ${assetRow.type} ${assetRow.name}
+    `);
 }
 function deleteGenAsset(uuid: string){
     const genAssetPath = path.join(ASSET_GENERATED_DIR, uuid);

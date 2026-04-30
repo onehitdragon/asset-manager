@@ -11,7 +11,6 @@ type GLB = {
 }
 type GLBTexture = {
     name: string,
-    mimeType: string,
     imageAsset: ShotEngineType.ImageAsset
 }
 type GLBMesh = {
@@ -36,7 +35,6 @@ export async function readGLBFile(filePath: string){
         const image = texture.getImage();
         glb.textures.push({
             name: texture.getName(),
-            mimeType: texture.getMimeType(),
             imageAsset: {
                 data: image ?? new Uint8Array()
             }
@@ -72,11 +70,13 @@ export async function readGLBFile(filePath: string){
         const gameObject = createGameObject(node, meshMap);
         glb.gameObjects.push(gameObject);
     }
+
+    return glb;
 }
 
 function createGameObject(node: Node, meshMap: Map<Mesh, number>){
     let gameObject: ShotEngineType.GameObject = {
-        id: uuidv4(),
+        id: "",
         name: node.getName(),
         components: [],
         childs: []
@@ -84,7 +84,7 @@ function createGameObject(node: Node, meshMap: Map<Mesh, number>){
     gameObject.components.push(
         {
             type: "Transfrom",
-            id: uuidv4(),
+            id: "",
             pos: {
                 x: node.getTranslation()[0],
                 y: node.getTranslation()[1],
@@ -110,7 +110,7 @@ function createGameObject(node: Node, meshMap: Map<Mesh, number>){
         gameObject.components.push(
             {
                 type: "Mesh",
-                id: uuidv4(),
+                id: "",
                 meshRef: meshIndex as any
             }
         );

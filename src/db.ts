@@ -32,13 +32,6 @@ db.exec(`
         property TEXT,
         FOREIGN KEY (fileId) REFERENCES files(uuid) ON DELETE CASCADE
     );
-    CREATE TABLE IF NOT EXISTS dependencies(
-        assetId TEXT,
-        dependentOn TEXT,
-        PRIMARY KEY(assetId, dependentOn),
-        FOREIGN KEY (assetId) REFERENCES assets(uuid) ON DELETE CASCADE,
-        FOREIGN KEY (dependentOn) REFERENCES assets(uuid) ON DELETE CASCADE
-    );
 `);
 
 export const filesQuery = {

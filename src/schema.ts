@@ -40,7 +40,9 @@ export const AssetSchema = z.discriminatedUnion("type", [OtherSchema, ImageSchem
 // types
 export type OtherAsset = z.infer<typeof OtherSchema>;
 export type ImageAsset = z.infer<typeof ImageSchema>;
-export type Asset = OtherAsset | ImageAsset;
+export type MeshAsset = { type: "mesh" };
+export type PrefabAsset = { type: "prefab" };
+export type Asset = OtherAsset | ImageAsset | MeshAsset;
 
 // defaults
 export const defaultOtherAsset: OtherAsset = {
@@ -57,5 +59,13 @@ export const defaultImageAsset: ImageAsset = {
         filterMode: "BILINEAR",
     }
 };
+export const defaultMeshAsset: MeshAsset = {
+    type: "mesh"
+};
+export const defaultPrefabAsset: PrefabAsset = {
+    type: "prefab"
+};
 export const defaultOtherAssetJSON = JSON.stringify(defaultOtherAsset);
 export const defaultImageAssetJSON = JSON.stringify(defaultImageAsset);
+export const defaultMeshAssetJSON = JSON.stringify(defaultMeshAsset);
+export const defaultPrefabAssetJSON = JSON.stringify(defaultPrefabAsset);
