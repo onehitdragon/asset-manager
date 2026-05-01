@@ -9,7 +9,7 @@ import { db, filesQuery, assetsQuery, FileRow, AssetRow } from "./db";
 import ShotEngineType from "@shot-engine/types";
 import sharp from "sharp";
 import { readGLBFile } from './glb';
-import { saveImageAssetBinary, saveMeshAssetBinary } from './flatbf';
+import { saveImageAssetBinary, saveMeshAssetBinary, savePrefabAssetBinary } from './flatbf';
 import { imageToRaw } from './imageToRaw';
 
 const MAIN_DIR = path.join(process.cwd(), "test", "ark-rm2", "Assets");
@@ -217,15 +217,15 @@ async function syncGLBContainer(fileRow: FileRow, assetRows: AssetRow[]){
     const glb = await readGLBFile(fileRow.path);
     if(!glb) return;
     const usedSet = new Set<string>();
-    const { textures, meshes, gameObjects } = glb;
-    const textureHashes: string[] = [];
-    const meshHashes: string[] = [];
+    const { textures, meshes, prefabAssets } = glb;
+    const textureAssetRows: AssetRow[] = [];
+    const meshAssetRows: AssetRow[] = [];
     for(const texture of textures){
         const hash = await hashImageAsset(texture.imageAsset);
-        textureHashes.push(hash);
         const assetRow = assetRows.find(e => e.hash === hash);
         if(assetRow){
             usedSet.add(assetRow.uuid);
+            textureAssetRows.push(assetRow);
         }
         else{
             const assetRow: AssetRow = {
@@ -245,16 +245,17 @@ async function syncGLBContainer(fileRow: FileRow, assetRows: AssetRow[]){
                 assetRow.property
             );
             usedSet.add(assetRow.uuid);
+            textureAssetRows.push(assetRow);
             assetRows.push(assetRow);
             genImageAsset(assetRow, texture.imageAsset);
         }
     }
     for(const mesh of meshes){
         const hash = await hashMeshAsset(mesh.meshAsset);
-        meshHashes.push(hash);
         const assetRow = assetRows.find(e => e.hash === hash);
         if(assetRow){
             usedSet.add(assetRow.uuid);
+            meshAssetRows.push(assetRow);
         }
         else{
             const assetRow: AssetRow = {
@@ -274,6 +275,7 @@ async function syncGLBContainer(fileRow: FileRow, assetRows: AssetRow[]){
                 assetRow.property
             );
             usedSet.add(assetRow.uuid);
+            meshAssetRows.push(assetRow);
             assetRows.push(assetRow);
             genMeshAsset(assetRow, mesh.meshAsset);
         }
@@ -281,16 +283,16 @@ async function syncGLBContainer(fileRow: FileRow, assetRows: AssetRow[]){
     function updateGameObjectDependency(go: ShotEngineType.GameObject){
         for(const component of go.components){
             if(component.type === "Mesh"){
-                component.meshRef = meshHashes[Number(component.meshRef)];
+                component.meshRef = meshAssetRows[Number(component.meshRef)].uuid;
             }
         }
         for(const child of go.childs) updateGameObjectDependency(child as ShotEngineType.GameObject);
     }
-    for(const gameObject of gameObjects){
-        updateGameObjectDependency(gameObject);
+    for(const prefabAsset of prefabAssets){
+        updateGameObjectDependency(prefabAsset.root);
     }
-    for(const gameObject of gameObjects){
-        const hash = await hashObject(gameObject);
+    for(const prefabAsset of prefabAssets){
+        const hash = await hashObject(prefabAsset);
         const assetRow = assetRows.find(e => e.hash === hash);
         if(assetRow){
             usedSet.add(assetRow.uuid);
@@ -301,7 +303,7 @@ async function syncGLBContainer(fileRow: FileRow, assetRows: AssetRow[]){
                 fileId: fileRow.uuid,
                 hash,
                 type: "prefab",
-                name: path.basename(fileRow.path) + "/" + gameObject.name,
+                name: path.basename(fileRow.path) + "/" + prefabAsset.root.name,
                 property: createAssetDefaultProterpty("prefab")
             };
             assetsQuery.insert.run(
@@ -314,7 +316,7 @@ async function syncGLBContainer(fileRow: FileRow, assetRows: AssetRow[]){
             );
             usedSet.add(assetRow.uuid);
             assetRows.push(assetRow);
-            genDefaultAsset(fileRow, assetRow);
+            genPrefabAsset(assetRow, prefabAsset);
         }
     }
 
@@ -380,6 +382,11 @@ function genMeshAsset(assetRow: AssetRow, meshAsset: ShotEngineType.MeshAsset){
     fs.ensureDirSync(ASSET_GENERATED_DIR);
     const genAssetPath = path.join(ASSET_GENERATED_DIR, assetRow.uuid);
     saveMeshAssetBinary(meshAsset, genAssetPath);
+}
+function genPrefabAsset(assetRow: AssetRow, prefabAsset: ShotEngineType.PrefabAsset){
+    fs.ensureDirSync(ASSET_GENERATED_DIR);
+    const genAssetPath = path.join(ASSET_GENERATED_DIR, assetRow.uuid);
+    savePrefabAssetBinary(prefabAsset, genAssetPath);
 }
 function deleteGenAsset(uuid: string){
     const genAssetPath = path.join(ASSET_GENERATED_DIR, uuid);

@@ -8,7 +8,7 @@ import { imageToRaw } from './imageToRaw';
 type GLB = {
     textures: GLBTexture[],
     meshes: GLBMesh[],
-    gameObjects: ShotEngineType.GameObject[]
+    prefabAssets: ShotEngineType.PrefabAsset[]
 }
 type GLBTexture = {
     name: string,
@@ -31,7 +31,7 @@ export async function readGLBFile(filePath: string){
     const glb: GLB = {
         textures: [],
         meshes: [],
-        gameObjects: []
+        prefabAssets: []
     };
     for(const texture of root.listTextures()){
         const image = texture.getImage();
@@ -72,8 +72,10 @@ export async function readGLBFile(filePath: string){
     const scene = root.getDefaultScene();
     if(!scene) return;
     for(const node of scene.listChildren()){
-        const gameObject = createGameObject(node, meshMap);
-        glb.gameObjects.push(gameObject);
+        const prefabAsset: ShotEngineType.PrefabAsset = {
+            root: createGameObject(node, meshMap)
+        }
+        glb.prefabAssets.push(prefabAsset);
     }
 
     return glb;

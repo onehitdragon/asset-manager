@@ -1,3 +1,5 @@
+include "engine.fbs";
+
 namespace FBSEngine;
 
 table ImageAsset{
@@ -18,4 +20,8 @@ table Primitive{
 
 table MeshAsset{
     primitives: [Primitive];
+}
+
+table PrefabAsset{
+    root: GameObject;
 }
