@@ -11,14 +11,18 @@ import sharp from "sharp";
 import { readGLBFile } from './glb';
 import { saveImageAssetBinary, saveMeshAssetBinary, savePrefabAssetBinary } from './flatbf';
 import { imageToRaw } from './imageToRaw';
+import { createDefaultCubeAssetMesh } from './createDefaultAssetMesh';
 
 const MAIN_DIR = path.join(process.cwd(), "test", "ark-rm2", "Assets");
 const MAIN_DIR2 = path.join(process.cwd(), "test", "ark-rm");
 const ASSET_DIR = MAIN_DIR2;
+const ASSET_DEFAULT_DIR = path.join(ASSET_DIR, ".default");
 
 async function rescan(){
     let now = performance.now();
     console.log(now, "ms");
+
+    ensureDefaultFiles();
 
     const fileRowsDB = filesQuery.gets.all() as FileRow[];
     const hashCache = new Map<string, string>();
@@ -113,6 +117,9 @@ async function rescan(){
             else if(isGLBFile(fileRow.path)){
                 syncGLBContainer(fileRow, assetRows);
             }
+            else if(isMeshFile(fileRow.path)){
+                await syncNotContainer(fileRow, assetRows, "mesh");
+            }
             else{
                 await syncNotContainer(fileRow, assetRows, "other");
             }
@@ -121,6 +128,21 @@ async function rescan(){
 
     console.log(performance.now() - now, "ms");
     now = performance.now();
+}
+
+function ensureDefaultFiles(){
+    fs.ensureDirSync(ASSET_DEFAULT_DIR);
+    const cubeAssetMeshPath = path.join(ASSET_DEFAULT_DIR, "cube-engine.mesh");
+    if(!fs.existsSync(cubeAssetMeshPath)){
+        const cubeAssetMesh = createDefaultCubeAssetMesh();
+        saveMeshAssetBinary(cubeAssetMesh, cubeAssetMeshPath);
+    }
+    
+    const set = new Set<string>([cubeAssetMeshPath]);
+    const entries = fsWalk.walkSync(ASSET_DEFAULT_DIR);
+    for(const entry of entries){
+        if(!set.has(entry.path)) fs.removeSync(entry.path);
+    }
 }
 
 let xxHashAPI: XXHashAPI | undefined;
@@ -171,6 +193,8 @@ async function hashObject(object: Object) {
 }
 
 async function syncNotContainer(fileRow: FileRow, assetRows: AssetRow[], type: AssetRow["type"]){
+    if(!fileRow.path) return;
+    const isDefaultFile = fileRow.path.startsWith(ASSET_DEFAULT_DIR);
     const usedSet = new Set<string>();
     for(const assetRow of assetRows){
         if(assetRow.type !== type) continue;
@@ -188,8 +212,9 @@ async function syncNotContainer(fileRow: FileRow, assetRows: AssetRow[], type: A
         break;
     }
     if(usedSet.size === 0){
+        const uuid = isDefaultFile ? path.basename(fileRow.path) : uuidv4();
         const assetRow: AssetRow = {
-            uuid: uuidv4(),
+            uuid,
             fileId: fileRow.uuid,
             hash: fileRow.hash,
             type,
@@ -348,6 +373,10 @@ function isGLBFile(filePath: string){
     const ext = path.extname(filePath).toLowerCase();
     return ext === ".glb";
 }
+function isMeshFile(filePath: string){
+    const ext = path.extname(filePath).toLowerCase();
+    return ext === ".mesh";
+}
 
 const ASSET_GENERATED_DIR = path.join(process.cwd(), ".assets");
 async function genAssetWithFile(fileRow: FileRow, assetRow: AssetRow, type: AssetRow["type"]) {
@@ -361,7 +390,16 @@ async function genAssetWithFile(fileRow: FileRow, assetRow: AssetRow, type: Asse
         }
         genImageAsset(assetRow, imageAsset);
     }
+    else if(type === "mesh"){
+        genAssetFromFile(fileRow, assetRow);
+    }
     else genDefaultAsset(fileRow, assetRow);
+}
+function genAssetFromFile(fileRow: FileRow, assetRow: AssetRow){
+    if(!fileRow.path) return;
+    fs.ensureDirSync(ASSET_GENERATED_DIR);
+    const genAssetPath = path.join(ASSET_GENERATED_DIR, assetRow.uuid);
+    fs.copyFileSync(fileRow.path!, genAssetPath);
 }
 function genDefaultAsset(fileRow: FileRow, assetRow: AssetRow){
     fs.ensureDirSync(ASSET_GENERATED_DIR);

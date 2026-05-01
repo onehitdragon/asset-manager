@@ -51,12 +51,15 @@ export async function readGLBFile(filePath: string){
             const positions = positionAttr ? positionAttr.getArray() as Float32Array : new Float32Array();
             const normalAttr = e.getAttribute("NORMAL");
             const normals = normalAttr ? normalAttr.getArray() as Float32Array : new Float32Array();
+            const uvAttr = e.getAttribute("TEXCOORD_0");
+            const uvs = uvAttr ? uvAttr.getArray() as Float32Array : new Float32Array();
             const indiceAttr = e.getIndices();
             const indices = indiceAttr ? new Uint32Array(indiceAttr.getArray() as ArrayLike<number>) : new Uint32Array();
             return {
                 attribute: {
                     positions,
-                    normals
+                    normals,
+                    uvs
                 },
                 indices
             }

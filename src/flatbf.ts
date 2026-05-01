@@ -27,9 +27,11 @@ export function saveMeshAssetBinary(meshAsset: ShotEngineType.MeshAsset, filePat
     for(const prim of meshAsset.primitives){
         const positionsOffset = PrimitiveAttribute.createPositionsVector(builder, prim.attribute.positions);
         const normalsOffset = PrimitiveAttribute.createNormalsVector(builder, prim.attribute.normals);
+        const uvsOffset = PrimitiveAttribute.createNormalsVector(builder, prim.attribute.uvs);
         PrimitiveAttribute.startPrimitiveAttribute(builder);
         PrimitiveAttribute.addPositions(builder, positionsOffset);
         PrimitiveAttribute.addNormals(builder, normalsOffset);
+        PrimitiveAttribute.addUvs(builder, uvsOffset);
         const attrOffset = PrimitiveAttribute.endPrimitiveAttribute(builder);
 
         const indicesOffset = Primitive.createIndicesVector(builder, prim.indices);
